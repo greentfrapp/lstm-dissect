@@ -4,10 +4,11 @@ import numpy as np
 
 class LSTM(object):
 
-	def __init__(self, sess, units):
+	def __init__(self, sess, units, seqlen):
 		super(LSTM, self).__init__()
 		self.units = units
 		self.sess = sess
+		self.seqlen = seqlen
 		self.cell = LSTMCell
 		self.build_model()
 		self.unroll()
@@ -40,7 +41,7 @@ class LSTM(object):
 		cell_state = cell.new_cell_state
 		hidden_state = cell.new_hidden_state
 		self.cells.append(cell)
-		for i in np.arange(2):
+		for i in np.arange(self.seqlen - 1):
 			cell = self.cell(
 				sess=self.sess,
 				units=self.units, 
@@ -74,8 +75,8 @@ class LSTM(object):
 		for i, cell in enumerate(self.cells):
 			feed_dict[cell.input] = x[i]
 			feed_dict[cell.labels] = y[i]
-		feed_dict[self.cell_state] = np.zeros((self.units, 1))
-		feed_dict[self.hidden_state] = np.zeros((self.units, 1))
+		feed_dict[self.cell_state] = np.zeros((5, self.units))
+		feed_dict[self.hidden_state] = np.zeros((5, self.units))
 		# loss, gradients = self.sess.run([self.loss, self.gradients], feed_dict)
 		loss, gradients = self.sess.run([self.cells[-1].loss, self.gradients], feed_dict)
 		return loss, gradients
@@ -100,7 +101,7 @@ class LSTMCell(object):
 
 		# input (per step)
 		self.input = tf.placeholder(
-			shape=[None, self.units],
+			shape=[None, 1],
 			dtype=tf.float32,
 			name="{}_input".format(self.name),
 		)
