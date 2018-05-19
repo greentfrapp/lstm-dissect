@@ -59,7 +59,7 @@ class LSTM(object):
 			dtype=tf.float32,
 			name="main_labels"
 		)
-		self.loss = tf.losses.mean_squared_error(self.labels, self.cells[-1].new_hidden_state)
+		self.loss = tf.losses.mean_squared_error(self.labels, self.cells[-1].output)
 		self.gradients = []
 		for i, cell in enumerate(self.cells):
 			self.gradients.append([])
@@ -73,13 +73,24 @@ class LSTM(object):
 	def fit(self, x, y):
 		feed_dict = {}
 		for i, cell in enumerate(self.cells):
-			feed_dict[cell.input] = x[i]
-			feed_dict[cell.labels] = y[i]
-		feed_dict[self.cell_state] = np.zeros((5, self.units))
-		feed_dict[self.hidden_state] = np.zeros((5, self.units))
+			feed_dict[cell.input] = np.array(x)[:, i]
+			feed_dict[cell.labels] = np.array(y)[:, i]
+		feed_dict[self.cell_state] = np.zeros((len(x), self.units))
+		feed_dict[self.hidden_state] = np.zeros((len(x), self.units))
 		# loss, gradients = self.sess.run([self.loss, self.gradients], feed_dict)
 		loss, gradients = self.sess.run([self.cells[-1].loss, self.gradients], feed_dict)
 		return loss, gradients
+
+	def test(self, x):
+		feed_dict = {}
+		for i, cell in enumerate(self.cells):
+			feed_dict[cell.input] = [x[i]]
+		feed_dict[self.cell_state] = np.zeros((1, self.units))
+		feed_dict[self.hidden_state] = np.zeros((1, self.units))
+		outputs = []
+		for cell in self.cells:
+			outputs.append(cell.prediction)
+		return self.sess.run(outputs, feed_dict)
 
 class LSTMCell(object):
 
@@ -154,8 +165,9 @@ class LSTMCell(object):
 		self.new_hidden_state = self.output_gate * tf.tanh(self.new_cell_state)
 
 		self.output = self.new_hidden_state
+		self.prediction = tf.sigmoid(self.output)
 
-		self.loss = tf.losses.mean_squared_error(self.labels, self.output)
+		self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.output))
 
 	def load_weights(self, weights):
 		feed_dict = dict(zip(self.weights_placeholders, weights))
