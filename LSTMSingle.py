@@ -53,37 +53,51 @@ class LSTM(object):
 			hidden_state = cell.new_hidden_state
 			self.cells.append(cell)
 
+		with tf.variable_scope("dense"):
+			output_dense_1 = tf.layers.dense(
+				inputs=hidden_state,
+				units=128,
+				activation=tf.nn.relu,
+				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
+				name="output_dense_1",
+			)
+
+			self.output = tf.layers.dense(
+				inputs=output_dense_1,
+				units=11,
+				activation=None,
+				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
+				name="output",
+			)
+
+		self.prediction = tf.nn.softmax(self.output)
+
 		# Loss Function
 		self.labels = tf.placeholder(
-			shape=[None, 10],
+			shape=[None, 11],
 			dtype=tf.float32,
 			name="main_labels"
 		)
-		self.loss = tf.losses.mean_squared_error(self.labels, self.cells[-1].output)
+		self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.labels, logits=self.output))
 		self.lstm_gradients = []
-		self.dense_gradients = []
 		for i, cell in enumerate(self.cells):
-			self.lstm_gradients.append([])
-			self.dense_gradients.append(tf.gradients(cell.loss, tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/dense".format(cell.name))))
-			for j, cell2 in enumerate(self.cells[:i + 1]):
-				lstm_grads = tf.gradients(cell.loss, tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/lstm".format(cell2.name)))
-				self.lstm_gradients[-1].append(lstm_grads)
+			self.lstm_gradients.append(tf.gradients(self.loss, tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/lstm".format(cell.name))))
 
+		self.dense_optimize = tf.train.AdamOptimizer().minimize(self.loss, var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "dense"))
 
-	def load_weights(self, dense_weights, lstm_weights):
+	def load_weights(self, lstm_weights):
 		for i, cell in enumerate(self.cells):
-			cell.load_weights(dense_weights, lstm_weights)
+			cell.load_weights(lstm_weights)
 
 	def fit(self, x, y):
 		feed_dict = {}
 		for i, cell in enumerate(self.cells):
 			feed_dict[cell.input] = np.array(x)[:, i]
-			feed_dict[cell.labels] = np.array(y)[:, i]
 		feed_dict[self.cell_state] = np.zeros((len(x), self.units))
 		feed_dict[self.hidden_state] = np.zeros((len(x), self.units))
-		# loss, gradients = self.sess.run([self.loss, self.gradients], feed_dict)
-		loss, dense_gradients, lstm_gradients = self.sess.run([self.cells[-1].loss, self.dense_gradients, self.lstm_gradients], feed_dict)
-		return loss, dense_gradients, lstm_gradients
+		feed_dict[self.labels] = y
+		loss, lstm_gradients, _ = self.sess.run([self.loss, self.lstm_gradients, self.dense_optimize], feed_dict)
+		return loss, lstm_gradients
 
 	def test(self, x):
 		feed_dict = {}
@@ -91,10 +105,7 @@ class LSTM(object):
 			feed_dict[cell.input] = [x[i]]
 		feed_dict[self.cell_state] = np.zeros((1, self.units))
 		feed_dict[self.hidden_state] = np.zeros((1, self.units))
-		outputs = []
-		for cell in self.cells:
-			outputs.append(cell.prediction)
-		return self.sess.run(outputs, feed_dict)
+		return self.sess.run(self.prediction, feed_dict)
 
 class LSTMCell(object):
 
@@ -107,12 +118,8 @@ class LSTMCell(object):
 		self.sess = sess
 		with tf.variable_scope(self.name):
 			self.build_model()
-			self.dense_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/dense".format(self.name))
-			self.dense_weights_placeholders = [tf.placeholder(v.dtype.base_dtype, shape=v.get_shape()) for v in self.dense_weights]
 			self.lstm_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/lstm".format(self.name))
 			self.lstm_weights_placeholders = [tf.placeholder(v.dtype.base_dtype, shape=v.get_shape()) for v in self.lstm_weights]
-			dense_assigns = [tf.assign(v, p) for v, p in zip(self.dense_weights, self.dense_weights_placeholders)]
-			self.dense_assign = tf.group(*dense_assigns)
 			lstm_assigns = [tf.assign(v, p) for v, p in zip(self.lstm_weights, self.lstm_weights_placeholders)]
 			self.lstm_assign = tf.group(*lstm_assigns)
 
@@ -123,13 +130,6 @@ class LSTMCell(object):
 			shape=[None, 1],
 			dtype=tf.float32,
 			name="{}_input".format(self.name),
-		)
-
-		# labels (per step)
-		self.labels = tf.placeholder(
-			shape=[None, 10],
-			dtype=tf.float32,
-			name="{}_labels".format(self.name),
 		)
 
 		with tf.variable_scope("lstm"):
@@ -173,33 +173,7 @@ class LSTMCell(object):
 			# new hidden state
 			self.new_hidden_state = self.output_gate * tf.nn.relu(self.new_cell_state)
 
-		# self.output = self.new_hidden_state
-		# self.prediction = tf.sigmoid(self.output)
-
-		with tf.variable_scope("dense"):
-			output_dense_1 = tf.layers.dense(
-				inputs=self.new_hidden_state,
-				units=128,
-				activation=tf.nn.relu,
-				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
-				name="output_dense_1",
-			)
-
-			self.output = tf.layers.dense(
-				inputs=output_dense_1,
-				units=10,
-				activation=None,
-				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
-				name="output",
-			)
-
-		self.prediction = tf.nn.softmax(self.output)
-
-		self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.labels, logits=self.output))
-
-	def load_weights(self, dense_weights, lstm_weights):
-		feed_dict = dict(zip(self.dense_weights_placeholders, dense_weights))
-		self.sess.run(self.dense_assign, feed_dict=feed_dict)
+	def load_weights(self, lstm_weights):
 		feed_dict = dict(zip(self.lstm_weights_placeholders, lstm_weights))
 		self.sess.run(self.lstm_assign, feed_dict=feed_dict)
 
