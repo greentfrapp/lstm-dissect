@@ -2,14 +2,14 @@ import tensorflow as tf
 import numpy as np
 
 
-class LSTM(object):
+class RNN(object):
 
 	def __init__(self, sess, units, seqlen):
-		super(LSTM, self).__init__()
+		super(RNN, self).__init__()
 		self.units = units
 		self.sess = sess
 		self.seqlen = seqlen
-		self.cell = LSTMCell
+		self.cell = RNNCell
 		self.build_model()
 		self.unroll()
 		self.dense_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "dense")
@@ -18,13 +18,6 @@ class LSTM(object):
 		self.dense_assign = tf.group(*dense_assigns)
 
 	def build_model(self):
-
-		# initial cell state
-		self.cell_state = tf.placeholder(
-			shape=[None, self.units],
-			dtype=tf.float32,
-			name="initial_cell_state",
-		)
 
 		# initial hidden state
 		self.hidden_state = tf.placeholder(
@@ -38,22 +31,18 @@ class LSTM(object):
 		cell = self.cell(
 			sess=self.sess,
 			units=self.units, 
-			cell_state=self.cell_state, 
 			hidden_state=self.hidden_state,
 			name='0',
 		)
-		cell_state = cell.new_cell_state
 		hidden_state = cell.new_hidden_state
 		self.cells.append(cell)
 		for i in np.arange(self.seqlen - 1):
 			cell = self.cell(
 				sess=self.sess,
 				units=self.units, 
-				cell_state=cell_state, 
 				hidden_state=hidden_state,
 				name=str(i + 1),
 			)
-			cell_state = cell.new_cell_state
 			hidden_state = cell.new_hidden_state
 			self.cells.append(cell)
 
@@ -85,7 +74,7 @@ class LSTM(object):
 		self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.labels, logits=self.output))
 		self.lstm_gradients = []
 		for i, cell in enumerate(self.cells):
-			self.lstm_gradients.append(tf.gradients(self.loss, tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/lstm".format(cell.name))))
+			self.lstm_gradients.append(tf.gradients(self.loss, tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/rnn".format(cell.name))))
 
 		self.dense_optimize = tf.train.AdamOptimizer().minimize(self.loss, var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "dense"))
 
@@ -100,24 +89,22 @@ class LSTM(object):
 		feed_dict = {}
 		for i, cell in enumerate(self.cells):
 			feed_dict[cell.input] = np.array(x)[:, i]
-		feed_dict[self.cell_state] = np.zeros((len(x), self.units))
 		feed_dict[self.hidden_state] = np.zeros((len(x), self.units))
 		feed_dict[self.labels] = y
 		loss, lstm_gradients, _ = self.sess.run([self.loss, self.lstm_gradients, self.dense_optimize], feed_dict)
 		return loss, lstm_gradients
 
-	def test(self, x, cell_state=None, hidden_state=None):
+	def test(self, x, hidden_state=None):
 		feed_dict = {}
 		for i, cell in enumerate(self.cells):
 			feed_dict[cell.input] = [x[i]]
-		feed_dict[self.cell_state] = cell_state or np.zeros((1, self.units))
 		feed_dict[self.hidden_state] = hidden_state or np.zeros((1, self.units))
 		return self.sess.run(self.prediction, feed_dict)
 
-class LSTMStep(object):
+class RNNStep(object):
 
 	def __init__(self, sess, units):
-		super(LSTMStep, self).__init__()
+		super(RNNStep, self).__init__()
 		self.units = units
 		self.sess = sess
 		self.build_model()
@@ -128,13 +115,6 @@ class LSTMStep(object):
 
 	def build_model(self):
 
-		# initial cell state
-		self.cell_state = tf.placeholder(
-			shape=[None, self.units],
-			dtype=tf.float32,
-			name="initial_cell_state",
-		)
-
 		# initial hidden state
 		self.hidden_state = tf.placeholder(
 			shape=[None, self.units],
@@ -142,10 +122,9 @@ class LSTMStep(object):
 			name="initial_hidden_state",
 		)
 
-		self.cell = LSTMCell(
+		self.cell = RNNCell(
 			sess=self.sess,
 			units=self.units,
-			cell_state=self.cell_state,
 			hidden_state=self.hidden_state,
 			name="cell",
 		)
@@ -174,32 +153,27 @@ class LSTMStep(object):
 		feed_dict = dict(zip(self.dense_weights_placeholders, dense_weights))
 		self.sess.run(self.dense_assign, feed_dict=feed_dict)
 
-	def step(self, x, cell_state=None, hidden_state=None):
+	def step(self, x, hidden_state=None):
 		feed_dict = {}
 		feed_dict[self.cell.input] = [[x]]
-		if cell_state is None:
-			feed_dict[self.cell_state] = np.zeros((1, self.units))
-		else:
-			feed_dict[self.cell_state] = cell_state
 		if hidden_state is None:
 			feed_dict[self.hidden_state] = np.zeros((1, self.units))
 		else:
 			feed_dict[self.hidden_state] = hidden_state
-		return self.sess.run([self.prediction, self.cell.new_cell_state, self.cell.new_hidden_state], feed_dict)
+		return self.sess.run([self.prediction, self.cell.new_hidden_state], feed_dict)
 		
 
-class LSTMCell(object):
+class RNNCell(object):
 
-	def __init__(self, sess, units, cell_state, hidden_state, name):
-		super(LSTMCell, self).__init__()
+	def __init__(self, sess, units, hidden_state, name):
+		super(RNNCell, self).__init__()
 		self.units = units
-		self.cell_state = cell_state
 		self.hidden_state = hidden_state
 		self.name = name
 		self.sess = sess
 		with tf.variable_scope(self.name):
 			self.build_model()
-			self.lstm_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/lstm".format(self.name))
+			self.lstm_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "{}/rnn".format(self.name))
 			self.lstm_weights_placeholders = [tf.placeholder(v.dtype.base_dtype, shape=v.get_shape()) for v in self.lstm_weights]
 			lstm_assigns = [tf.assign(v, p) for v, p in zip(self.lstm_weights, self.lstm_weights_placeholders)]
 			self.lstm_assign = tf.group(*lstm_assigns)
@@ -213,46 +187,16 @@ class LSTMCell(object):
 			name="{}_input".format(self.name),
 		)
 
-		with tf.variable_scope("lstm"):
-			# forget gate
-			self.forget_gate = tf.layers.dense(
-				inputs=tf.concat([self.hidden_state, self.input], axis=1),
-				units=self.units,
-				activation=tf.sigmoid,
-				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
-				name="forget_gate",
-			)
+		with tf.variable_scope("rnn"):
 
-			# input gate
-			self.input_gate_filter = tf.layers.dense(
-				inputs=tf.concat([self.hidden_state, self.input], axis=1),
-				units=self.units,
-				activation=tf.sigmoid,
-				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
-				name="input_gate_filter",
-			)
-			self.input_gate_update = tf.layers.dense(
+			# new hidden state
+			self.new_hidden_state = tf.layers.dense(
 				inputs=tf.concat([self.hidden_state, self.input], axis=1),
 				units=self.units,
 				activation=tf.nn.relu,
 				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
-				name="input_gate_update",
+				name="hidden_state",
 			)
-
-			# output gate
-			self.output_gate = tf.layers.dense(
-				inputs=tf.concat([self.hidden_state, self.input], axis=1),
-				units=self.units,
-				activation=tf.sigmoid,
-				kernel_initializer=tf.truncated_normal_initializer(.0,.01),
-				name="output_gate",
-			)
-
-			# new cell state
-			self.new_cell_state = self.forget_gate * self.cell_state + self.input_gate_filter * self.input_gate_update
-
-			# new hidden state
-			self.new_hidden_state = self.output_gate * tf.nn.relu(self.new_cell_state)
 
 	def load_weights(self, lstm_weights):
 		feed_dict = dict(zip(self.lstm_weights_placeholders, lstm_weights))
