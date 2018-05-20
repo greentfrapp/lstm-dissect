@@ -31,13 +31,14 @@ flags.DEFINE_integer("epochs", 1000, "Number of training epochs")
 flags.DEFINE_integer("samples", 600, "Number of training samples from MNIST")
 flags.DEFINE_integer("batchsize", 5, "Training batchsize")
 flags.DEFINE_integer("seqlen", 10, "Sequence length for training")
+flags.DEFINE_float("lr", 0.001, "Learning rate")
 
 # Test
 flags.DEFINE_list("seq", None, "Sequence for testing")
 flags.DEFINE_integer("val", 0, "Value for testing")
 
 
-def train(option="lstm"):
+def train(option="lstm", file_desc=""):
 	epochs = FLAGS.epochs
 	batchsize = FLAGS.batchsize
 	shuffle_x = np.random.RandomState(42)
@@ -58,15 +59,8 @@ def train(option="lstm"):
 	lstm_weights = sess.run(lstm.cells[0].lstm_weights)
 	lstm.load_weights(lstm_weights)
 
-	# initial_lr = 1e0
-	# lr_delta = (1e-3 - 1e0) / 499
-
-	initial_lr = 1e-3
-	lr_delta = 0
-
 	n_iters = len(x) / batchsize
 	for i in np.arange(epochs):
-		lr = max(initial_lr + lr_delta * i, 1e-3)
 		shuffle_x.shuffle(x)
 		shuffle_y.shuffle(y)
 		for j in np.arange(n_iters):
@@ -74,32 +68,20 @@ def train(option="lstm"):
 			end = int(start + batchsize)
 			loss, lstm_gradients = lstm.fit(x[start:end], y[start:end])
 			lstm_gradients = utils.average_gradients(lstm_gradients)
-			lstm_weights = [lstm_weights[i] - lr * grad for i, grad in enumerate(lstm_gradients)]
+			lstm_weights = [lstm_weights[i] - FLAGS.lr * grad for i, grad in enumerate(lstm_gradients)]
 			dense_weights = sess.run(lstm.dense_weights)
 			lstm.load_weights(lstm_weights)
 		if i % 5 == 0:
 			print("\nEpoch #{} Loss: {}".format(i, loss))
-			test_x[0] = [[1], [1], [1], [-1], [1], [1], [-1], [1], [1], [1]]
-			test_x[0] = [[1], [1], [1], [1], [1]]
-			options = [
-				[[1], [0], [0], [-1], [1], [1], [0], [0], [0], [1]],
-				[[0], [1], [-1], [1], [0], [0], [1], [0], [1], [0]],
-				[[1], [0], [1], [0], [-1], [1], [0], [1], [1], [1]],
-				[[1], [1], [-1], [0], [0], [1], [1], [0], [1], [1]],
-				[[1], [-1], [1], [1], [0], [1], [0], [0], [1], [0]],
-			]
-			test_x[0] = options[np.random.choice(5)]
-			corr_pred = [[1], [2], [3], [0], [1], [2], [0], [1], [2], [3]]
-			corr_pred = [[1], [2], [3], [4], [5]]
 			print(test_x[0])
 			predictions = lstm.test(test_x[0])
 			print(np.argmax(predictions))
-			with open("model/rnn_lstm_weights_2_small.pkl", 'wb') as file:
+			with open("model/{}_lstm.pkl".format(file_desc), 'wb') as file:
 				pickle.dump(lstm_weights, file)
-			with open("model/rnn_dense_weights_2_small.pkl", 'wb') as file:
+			with open("model/{}_dense.pkl".format(file_desc), 'wb') as file:
 				pickle.dump(dense_weights, file)
 
-def test(option="lstm"):
+def test(option="lstm", file_desc=""):
 	if FLAGS.seq is None:
 		ones = np.random.choice(np.arange(FLAGS.seqlen), FLAGS.val, replace=False)
 		seq = np.zeros(FLAGS.seqlen)
@@ -113,25 +95,29 @@ def test(option="lstm"):
 	elif option == "rnn":
 		lstm = RNN(sess, FLAGS.hidden, FLAGS.seqlen)
 	sess.run(tf.global_variables_initializer())
-	with open("model/rnn_lstm_weights_2_small.pkl", 'rb') as file:
+	print("\n\nLoading model/{}_lstm.pkl...".format(file_desc))
+	with open("model/{}_lstm.pkl".format(file_desc), 'rb') as file:
 		lstm_weights = pickle.load(file)
-	with open("model/rnn_dense_weights_2_small.pkl", 'rb') as file:
+	print("\n\nLoading model/{}_dense.pkl...\n\n".format(file_desc))
+	with open("model/{}_dense.pkl".format(file_desc), 'rb') as file:
 		dense_weights = pickle.load(file)
 	lstm.load_weights(lstm_weights, dense_weights)
 	print(seq.reshape(-1))
 	predictions = lstm.test(seq)
 	print(np.argmax(predictions))
 
-def step(option="lstm"):
+def step(option="lstm", file_desc=""):
 	sess = tf.Session()
 	if option == "lstm":
 		lstm = LSTMStep(sess, FLAGS.hidden)
 	elif option == "rnn":
 		lstm = RNNStep(sess, FLAGS.hidden)
 	sess.run(tf.global_variables_initializer())
-	with open("model/rnn_lstm_weights_2_small.pkl", 'rb') as file:
+	print("\n\nLoading model/{}_lstm.pkl...".format(file_desc))
+	with open("model/{}_lstm.pkl".format(file_desc), 'rb') as file:
 		lstm_weights = pickle.load(file)
-	with open("model/rnn_dense_weights_2_small.pkl", 'rb') as file:
+	print("\n\nLoading model/{}_dense.pkl...\n\n".format(file_desc))
+	with open("model/{}_dense.pkl".format(file_desc), 'rb') as file:
 		dense_weights = pickle.load(file)
 	lstm.load_weights(lstm_weights, dense_weights)
 
@@ -152,12 +138,13 @@ def step(option="lstm"):
 
 
 def main(argv):
+	desc = "_".join([FLAGS.type, "h{}".format(FLAGS.hidden)])
 	if FLAGS.train:
-		train(FLAGS.type)
+		train(FLAGS.type, desc)
 	elif FLAGS.test:
-		test(FLAGS.type)
+		test(FLAGS.type, desc)
 	elif FLAGS.step:
-		step(FLAGS.type)
+		step(FLAGS.type, desc)
 	
 
 if __name__ == "__main__":
