@@ -137,7 +137,7 @@ def step(option="lstm", file_desc=""):
 			print(hidden_state)
 
 
-def main(argv):
+def main(unused_argv):
 	desc = "_".join([FLAGS.type, "h{}".format(FLAGS.hidden)])
 	if FLAGS.train:
 		train(FLAGS.type, desc)
